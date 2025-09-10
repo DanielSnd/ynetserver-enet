@@ -533,7 +533,11 @@ std::string YNetServer::generateRoomCode() {
     std::string code;
     code.reserve(6);
     for (int i = 0; i < 6; ++i) {
-        code += ROOM_CODE_CHARS[dis(gen)];
+        if (i == 1 || i == 3) {
+            code += ROOM_CODE_CHARS_SQ[dis(gen)];
+        } else {
+            code += ROOM_CODE_CHARS[dis(gen)];
+        }
     }
     return code;
 }

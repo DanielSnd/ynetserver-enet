@@ -6,9 +6,12 @@
 #include "thirdparty/enet.h"
 
 // Room code character set
-constexpr std::array<char, 24> ROOM_CODE_CHARS = {
-    'A', 'B', 'C', 'D', 'E', 'F', 'R', 'T', 'P', 'X', 'Z', 'S',
-    'Q', 'H', 'J', 'Y', 'W', 'K', 'N', '1', '2', '3', '4', '5'
+constexpr std::array<char, 25> ROOM_CODE_CHARS = {
+    'A', 'B', 'C', 'D', 'E', 'F', 'R', 'T', 'P', 'X', 'Z', '9',
+    'Q', 'H', 'J', 'Y', 'W', 'K', 'N', '1', '2', '3', '4', '5', '7'
+};
+constexpr std::array<char, 12> ROOM_CODE_CHARS_SQ = {
+    'Z', 'T', 'Q', 'H', 'J', '1', '2', '3', '4', '5', '7', '9'
 };
 
 // Maximum room ID value (2 bytes)
