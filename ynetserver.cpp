@@ -117,8 +117,12 @@ void YNetServer::run() {
                                 << " (Protocol: " << client->protocolVersion << ")" << std::endl;
                         
                         // Configure more forgiving timeout settings for this peer
-                        enet_peer_timeout(event.peer, 32, 10000, 30000);
-                        enet_peer_ping_interval(event.peer, 2000);
+                        enet_peer_timeout(event.peer,
+                            16,    // timeout limit: 16 attempts before giving up
+                            5000,  // timeout minimum: 5 seconds for first timeout
+                            15000  // timeout maximum: 15 seconds for final timeout
+                        );
+                        enet_peer_ping_interval(event.peer, 1000);
                         
                         if (debugging) {
                             std::cout << "DEBUG: Configured peer timeout settings for client " << client->id << ":" << std::endl;
@@ -434,6 +438,7 @@ void YNetServer::handleReceivedData(Client* client, ENetPeer* peer, const uint8_
         // Echo back the raw data to confirm receipt
         ENetPacket* packet = enet_packet_create(data, dataLength, ENET_PACKET_FLAG_RELIABLE);
         enet_peer_send(peer, 0, packet);
+        enet_host_flush(server);
     }
 }
 
@@ -480,7 +485,7 @@ void YNetServer::sendMessage(Client* client, ENetPeer* peer, BaseMessage& msg, u
     writeStream.Flush();
     ENetPacket* packet = enet_packet_create(buffer, writeStream.GetBytesProcessed(), reliabilityFlags);
     enet_peer_send(peer, channel, packet);
-    
+    enet_host_flush(server);
     if (debugging) {
         std::cout << "DEBUG: Message sent successfully. Raw bytes: ";
         for (int i = 0; i < writeStream.GetBytesProcessed(); i++) {
@@ -506,7 +511,7 @@ void YNetServer::sendRPCMessage(Client* client, ENetPeer* peer, RPCMessage& msg)
     writeStream.Flush();
     ENetPacket* packet = enet_packet_create(buffer, writeStream.GetBytesProcessed(), ENET_PACKET_FLAG_RELIABLE);
     enet_peer_send(peer, 0, packet);
-    
+    enet_host_flush(server);
     if (debugging) {
         std::cout << "DEBUG: Message sent successfully" << std::endl;
     }
@@ -528,15 +533,16 @@ bool YNetServer::isValidRoomCode(const std::string& code) {
 std::string YNetServer::generateRoomCode() {
     static std::random_device rd;
     static std::mt19937 gen(rd());
-    static std::uniform_int_distribution<> dis(0, ROOM_CODE_CHARS.size() - 1);
+    static std::uniform_int_distribution<> dis_full(0, ROOM_CODE_CHARS.size() - 1);
+    static std::uniform_int_distribution<> dis_sq(0, ROOM_CODE_CHARS_SQ.size() - 1);
     
     std::string code;
     code.reserve(6);
     for (int i = 0; i < 6; ++i) {
         if (i == 1 || i == 3) {
-            code += ROOM_CODE_CHARS_SQ[dis(gen)];
+            code += ROOM_CODE_CHARS_SQ[dis_sq(gen)];  // Use the smaller distribution
         } else {
-            code += ROOM_CODE_CHARS[dis(gen)];
+            code += ROOM_CODE_CHARS[dis_full(gen)];   // Use the larger distribution
         }
     }
     return code;
