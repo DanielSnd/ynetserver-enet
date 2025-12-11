@@ -93,94 +93,99 @@ void YNetServer::run() {
     
     while (true) {
         // Handle ENET events with a small timeout
-        int result = enet_host_service(server, &event, 0);
-        if (result > 0) {
-            if (debugging) {
-                std::cout << "ENET event received, type: " << EventTypeToString(event.type) << std::endl;
-            }
-            Client* client = nullptr;
-            if (event.type == ENET_EVENT_TYPE_CONNECT) {
-                client = createClientForPeer(event.peer, event.data);
-            } else {
-                client = getClientForPeer(event.peer);
-            }
-            bool client_debugging = client->debugging;
-            if (client != nullptr) {
-                switch (event.type) {
-                    case ENET_EVENT_TYPE_CONNECT: {
-                        char ip_str[INET6_ADDRSTRLEN];
-                        inet_ntop(AF_INET6, &event.peer->address.host, ip_str, INET6_ADDRSTRLEN);
-                        std::cout << "New connection from " 
-                                << ip_str << ":" 
-                                << event.peer->address.port 
-                                << " (Peer ID: " << client->id << ")"
-                                << " (Protocol: " << client->protocolVersion << ")" << std::endl;
-                        
-                        // Configure more forgiving timeout settings for this peer
-                        enet_peer_timeout(event.peer,
-                            16,    // timeout limit: 16 attempts before giving up
-                            5000,  // timeout minimum: 5 seconds for first timeout
-                            15000  // timeout maximum: 15 seconds for final timeout
-                        );
-                        enet_peer_ping_interval(event.peer, 1000);
-                        
-                        if (debugging) {
-                            std::cout << "DEBUG: Configured peer timeout settings for client " << client->id << ":" << std::endl;
-                            std::cout << "  Ping interval: " << event.peer->pingInterval << "ms" << std::endl;
-                            std::cout << "  Ping timeout: " << event.peer->timeoutMinimum << "ms" << std::endl;
-                            std::cout << "  Timeout limit: " << event.peer->timeoutLimit << " timeouts before disconnect" << std::endl;
+        bool hadEvents = false;
+        int result;
+        while ((result = enet_host_service(server, &event, hadEvents ? 0 : 16)) > 0) {
+            hadEvents = true;
+            if (result > 0) {
+                if (debugging) {
+                    std::cout << "ENET event received, type: " << EventTypeToString(event.type) << std::endl;
+                }
+                Client* client = nullptr;
+                if (event.type == ENET_EVENT_TYPE_CONNECT) {
+                    client = createClientForPeer(event.peer, event.data);
+                } else {
+                    client = getClientForPeer(event.peer);
+                }
+                bool client_debugging = client->debugging;
+                if (client != nullptr) {
+                    switch (event.type) {
+                        case ENET_EVENT_TYPE_CONNECT: {
+                            char ip_str[INET6_ADDRSTRLEN];
+                            inet_ntop(AF_INET6, &event.peer->address.host, ip_str, INET6_ADDRSTRLEN);
+                            std::cout << "New connection from " 
+                                    << ip_str << ":" 
+                                    << event.peer->address.port 
+                                    << " (Peer ID: " << client->id << ")"
+                                    << " (Protocol: " << client->protocolVersion << ")" << std::endl;
+                            
+                            // Configure more forgiving timeout settings for this peer
+                            enet_peer_timeout(event.peer,
+                                32,    // timeout limit: 16 attempts before giving up
+                                10000,  // timeout minimum: 5 seconds for first timeout
+                                30000  // timeout maximum: 15 seconds for final timeout
+                            );
+                            enet_peer_ping_interval(event.peer, 2000);
+                            
+                            if (debugging) {
+                                std::cout << "DEBUG: Configured peer timeout settings for client " << client->id << ":" << std::endl;
+                                std::cout << "  Ping interval: " << event.peer->pingInterval << "ms" << std::endl;
+                                std::cout << "  Ping timeout: " << event.peer->timeoutMinimum << "ms" << std::endl;
+                                std::cout << "  Timeout limit: " << event.peer->timeoutLimit << " timeouts before disconnect" << std::endl;
+                            }
+                            
+                            // Send the peer ID to the client
+                            ConfirmConnectionMessage message;
+                            message.type = MessageType::CONFIRM_CONNECTION;
+                            message.clientId = client->id;
+                            sendMessage(client, event.peer, message);
+                            break;
                         }
-                        
-                        // Send the peer ID to the client
-                        ConfirmConnectionMessage message;
-                        message.type = MessageType::CONFIRM_CONNECTION;
-                        message.clientId = client->id;
-                        sendMessage(client, event.peer, message);
-                        break;
+
+                        case ENET_EVENT_TYPE_RECEIVE:
+                            if (debugging || client_debugging) {
+                                std::cout << "Received data from client " << client->id << std::endl;
+                                std::cout << "First byte: " << event.packet->data[0] << "Data length: " << event.packet->dataLength << " bytes" << std::endl;
+                                std::cout << "Channel: " << event.channelID << std::endl;
+                            }
+                            handleReceivedData(client, event.peer, event.packet->data, event.packet->dataLength);
+                            enet_packet_destroy(event.packet);
+                            break;
+
+                        case ENET_EVENT_TYPE_DISCONNECT:
+                            std::cout << "Client disconnected (Client ID: " << client->id << ")" << std::endl;
+                            if (client != nullptr) {
+                                releaseClientId(client->id);
+                                handleRoomLeave(client, event.peer);
+                                clients.erase(event.peer);
+                                delete client;
+                            }
+                            break;
+
+                        case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
+                            std::cout << "Client disconnected (Client ID: " << client->id << ") from timeout." << std::endl;
+                            if (client != nullptr) {
+                                releaseClientId(client->id);
+                                handleRoomLeave(client, event.peer);
+                                clients.erase(event.peer);
+                                delete client;
+                            }
+                            break;
+
+                        default:
+                            std::cout << "Unknown event type: " << event.type << std::endl;
+                            break;
                     }
-
-                    case ENET_EVENT_TYPE_RECEIVE:
-                        if (debugging || client_debugging) {
-                            std::cout << "Received data from client " << client->id << std::endl;
-                            std::cout << "First byte: " << event.packet->data[0] << "Data length: " << event.packet->dataLength << " bytes" << std::endl;
-                            std::cout << "Channel: " << event.channelID << std::endl;
-                        }
-                        handleReceivedData(client, event.peer, event.packet->data, event.packet->dataLength);
-                        enet_packet_destroy(event.packet);
-                        break;
-
-                    case ENET_EVENT_TYPE_DISCONNECT:
-                        std::cout << "Client disconnected (Client ID: " << client->id << ")" << std::endl;
-                        if (client != nullptr) {
-                            releaseClientId(client->id);
-                            handleRoomLeave(client, event.peer);
-                            clients.erase(event.peer);
-                            delete client;
-                        }
-                        break;
-
-                    case ENET_EVENT_TYPE_DISCONNECT_TIMEOUT:
-                        std::cout << "Client disconnected (Client ID: " << client->id << ") from timeout." << std::endl;
-                        if (client != nullptr) {
-                            releaseClientId(client->id);
-                            handleRoomLeave(client, event.peer);
-                            clients.erase(event.peer);
-                            delete client;
-                        }
-                        break;
-
-                    default:
-                        std::cout << "Unknown event type: " << event.type << std::endl;
-                        break;
                 }
             }
-        } else if (result < 0) {
-            std::cerr << "Error in enet_host_service: " << result << std::endl;
+        }
 
+        if (result < 0) {
+            std::cerr << "Error in enet_host_service: " << result << std::endl;
         }
 
         // Handle Mongoose events with a small timeout
-        mg_mgr_poll(&mgr, 0);
+        mg_mgr_poll(&mgr, 6);
     }
 }
 
